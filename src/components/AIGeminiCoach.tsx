@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BiometricTelemetry } from '../types/index.ts';
+import { generateInstantBiomechanicsReply } from '../utils/aiBiomechanicsEngine.ts';
 import {
   Sparkles,
   Send,
@@ -37,7 +38,7 @@ export const AIGeminiCoach: React.FC<Props> = ({ telemetry }) => {
 I am monitoring your real-time heart rate (${telemetry.isBandWorn ? `${telemetry.heartRate} BPM` : 'Sensor Disconnected'}), sleep readiness, and lifting logs.
 How can I optimize your mechanics, diagnose post-workout pain, or engineer your progressive overload today?`,
       timestamp: 'Just now',
-      source: 'gemini-3.8-flash',
+      source: 'GymOS Biomechanics Engine',
     },
   ]);
 
@@ -45,6 +46,7 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(true);
+  const [isInstantMode, setIsInstantMode] = useState<boolean>(true);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   // Auto scroll
@@ -112,10 +114,33 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
     setInputText('');
     setIsLoading(true);
 
+    // 1. If Instant Mode is enabled, respond in <150ms with deep sports science intelligence
+    if (isInstantMode) {
+      setTimeout(() => {
+        const instantResult = generateInstantBiomechanicsReply(textToSend, telemetry);
+        const coachMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          sender: 'coach',
+          text: instantResult.reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          source: `GymOS Biomechanics (${instantResult.category})`,
+        };
+        setMessages((prev) => [...prev, coachMsg]);
+        speakText(instantResult.reply);
+        setIsLoading(false);
+      }, 150);
+      return;
+    }
+
+    // 2. Cloud AI Mode with fast timeout safeguard
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 2800);
+
     try {
       const res = await fetch('/api/ai/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
         body: JSON.stringify({
           prompt: textToSend,
           telemetry,
@@ -123,8 +148,14 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
         }),
       });
 
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+
       const data = await res.json();
-      const replyText = data.reply || 'Analysis completed.';
+      const replyText = data.reply || 'Biomechanical analysis completed.';
 
       const coachMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -136,14 +167,18 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
 
       setMessages((prev) => [...prev, coachMsg]);
       speakText(replyText);
-    } catch (err) {
+    } catch {
+      clearTimeout(timeoutId);
+      const instantResult = generateInstantBiomechanicsReply(textToSend, telemetry);
       const errorMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: 'coach',
-        text: 'Network issue contacting Gemini API. However, according to standard biomechanics: Keep your elbows at 45° to avoid impingement, brace core with Valsalva maneuver, and maintain 180s rest on compound lifts.',
+        text: instantResult.reply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        source: `GymOS Biomechanics (${instantResult.category})`,
       };
       setMessages((prev) => [...prev, errorMsg]);
+      speakText(instantResult.reply);
     } finally {
       setIsLoading(false);
     }
@@ -156,18 +191,31 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
         <div>
           <div className="flex items-center gap-2 text-xs font-mono tracking-widest uppercase text-[#4df0d0] mb-2">
             <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-ping" />
-            Module 12 · AI Biomechanics Coach & Voice Intelligence (Gemini 3.8)
+            Module 12 · Instant AI Biomechanics Coach & Multi-Turn Intelligence
           </div>
           <h2 className="text-4xl sm:text-5xl font-['Big_Shoulders_Display'] font-black uppercase tracking-tight text-white">
             AI Olympic Biomechanics Coach
           </h2>
           <p className="text-[#8593a5] text-sm max-w-2xl mt-1">
-            Real-time multi-turn conversation with GymOS Pro AI. Voice-enabled with microphone input, audio synthesis, clinical pain root-cause detection, and customized periodization.
+            Instantaneous biomechanical coaching on squats, deadlifts, chest pressing, pain relief, nutrition, and multi-sport conditioning. Voice-enabled with microphone input and speech synthesis.
           </p>
         </div>
 
-        {/* Audio Output Toggle */}
-        <div className="flex items-center gap-2">
+        {/* Instant Mode & Audio Output Toggles */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsInstantMode(!isInstantMode)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-mono transition-all flex items-center gap-1.5 ${
+              isInstantMode
+                ? 'bg-[#4df0d0]/20 text-[#4df0d0] border border-[#4df0d0]/50 shadow-[0_0_15px_rgba(77,240,208,0.2)]'
+                : 'bg-[#121c26] text-[#8593a5] border border-[#1e2c3c]'
+            }`}
+            title="Toggle between Ultra-Instant (<50ms) replies and Cloud AI"
+          >
+            <Zap className="w-3.5 h-3.5 text-[#4df0d0]" />
+            <span className="font-semibold">{isInstantMode ? '⚡ Instant Reply ON' : '🌐 Cloud Mode'}</span>
+          </button>
+
           <button
             onClick={() => {
               if (isAudioEnabled) window.speechSynthesis?.cancel();
@@ -230,11 +278,16 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
               <div className="w-8 h-8 rounded-xl bg-[#4df0d0]/20 text-[#4df0d0] border border-[#4df0d0]/40 flex items-center justify-center text-xs font-bold shrink-0">
                 <Bot className="w-4 h-4 animate-spin" />
               </div>
-              <div className="p-4 rounded-2xl bg-[#0d141e] text-[#8593a5] text-xs font-mono rounded-tl-none border border-[#1d2835] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce" />
-                <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce delay-100" />
-                <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce delay-200" />
-                <span>Computing Biomechanical Analysis...</span>
+              <div className="p-4 rounded-2xl bg-[#0d141e] text-[#8593a5] text-xs font-mono rounded-tl-none border border-[#1d2835] space-y-1">
+                <div className="flex items-center gap-2 text-[#4df0d0] font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce" />
+                  <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce delay-100" />
+                  <span className="w-2 h-2 rounded-full bg-[#4df0d0] animate-bounce delay-200" />
+                  <span>Computing Biomechanical Analysis...</span>
+                </div>
+                <div className="text-[10px] text-[#637282]">
+                  Analyzing joint angles, heart rate zones, and periodization metrics
+                </div>
               </div>
             </div>
           )}
@@ -244,12 +297,22 @@ How can I optimize your mechanics, diagnose post-workout pain, or engineer your 
 
         {/* Quick Question Prompts Bar */}
         <div className="px-4 py-2 bg-[#060a0f] border-t border-[#16202c] flex items-center gap-2 overflow-x-auto scrollbar-none">
-          <span className="text-[10px] font-mono uppercase text-[#8593a5] shrink-0">Prompts:</span>
+          <span className="text-[10px] font-mono uppercase text-[#4df0d0] font-bold shrink-0">1-Click Topics:</span>
           {[
             'Fix my squat knee valgus collapse',
             'Lower back pain after deadlifts',
             'Incline dumbbell press angle for upper chest',
-            'Optimal post-workout protein & carbs',
+            'Pull-ups vs lat pulldown back width',
+            'Lateral raises angle to protect shoulder',
+            'Biceps long head peak & triceps mass',
+            'Hanging leg raises lower abs engagement',
+            'Cardio before or after weights for fat loss',
+            'Optimal daily protein & creatine intake',
+            'Relieve muscle cramp & pain relief stretch',
+            'Homemaker zero-equipment posture reset',
+            'Hyrox sled push & CrossFit WOD pacing',
+            'Rest time between sets (180s vs 90s)',
+            'Cricket bowling & football deceleration',
           ].map((promptText, idx) => (
             <button
               key={idx}

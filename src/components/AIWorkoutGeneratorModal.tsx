@@ -57,6 +57,7 @@ Provide a clean structured breakdown with split name, exercises, target muscle s
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          prompt: promptText,
           message: promptText,
           systemContext: 'You are the Olympic biomechanics lead for GymOS Pro. Recommend precise sub-muscular isolation (e.g. Clavicular Upper Chest, Lateral Delts, VMO Teardrop quad).',
         }),

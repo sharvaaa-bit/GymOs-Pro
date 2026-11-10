@@ -2,5 +2,7 @@
   "name": "GymOS Pro - Luxury Intelligent Fitness & Club OS",
   "description": "Next-generation gym platform combining real-time biomechanics, anatomical muscle atlas, AI computer-vision form analysis, smart nutrition, workout logging, IoT velocity-based training, and gym operations ERP.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -21,16 +23,30 @@ if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
   }
 }
 
+import { generateInstantBiomechanicsReply } from './src/utils/aiBiomechanicsEngine.ts';
+
 // 1. AI GymOS Voice & Biomechanical Coach Endpoint
 app.post('/api/ai/coach', async (req, res) => {
   try {
-    const { prompt, memberProfile, recentWorkout, telemetry } = req.body;
+    const prompt = req.body.prompt || req.body.message || '';
+    const { memberProfile, recentWorkout, telemetry, instant } = req.body;
 
-    if (!prompt) {
+    if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    if (aiClient) {
+    // Instant replay mode requested or no cloud key: return immediately in <10ms
+    if (instant || !aiClient) {
+      const instantResult = generateInstantBiomechanicsReply(prompt, telemetry);
+      return res.json({
+        reply: instantResult.reply,
+        category: instantResult.category,
+        source: 'gymos-biomechanics-engine (instant)',
+      });
+    }
+
+    // Fast-race Gemini against 2.5-second cutoff to guarantee instant responsiveness
+    try {
       const systemInstruction = `You are GymOS Pro AI, an elite Olympic biomechanics coach, sports scientist, and master sports nutritionist.
 You speak with authoritative, motivating, high-end technical clarity.
 Analyze the athlete's biometrics (Heart Rate, HRV, Sleep readiness), current lifts, and pain signals.
@@ -40,7 +56,11 @@ Provide actionable, scientific guidance with:
 3. Recovery and hydration advice.
 Keep answers concise, structured with bullet points.`;
 
-      const response = await aiClient.models.generateContent({
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('AI response timed out')), 2500)
+      );
+
+      const aiPromise = aiClient.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: [
           {
@@ -54,38 +74,22 @@ Keep answers concise, structured with bullet points.`;
         ],
       });
 
+      const response = await Promise.race([aiPromise, timeoutPromise]);
       const replyText = response.text || 'Analysis completed.';
       return res.json({ reply: replyText, source: 'gemini-3.8-flash' });
+    } catch {
+      // Rapid fallback to comprehensive biomechanics engine
+      const fallbackResult = generateInstantBiomechanicsReply(prompt, telemetry);
+      return res.json({
+        reply: fallbackResult.reply,
+        category: fallbackResult.category,
+        source: 'gymos-biomechanics-engine',
+      });
     }
-
-    // Dynamic High-Fidelity Biomechanical Fallback Engine
-    const p = prompt.toLowerCase();
-    let reply = '';
-    if (p.includes('squat') || p.includes('knee') || p.includes('depth')) {
-      reply = `**Biomechanical Squat Prescription**:
-• **Joint Kinematics**: Ensure the femur descends at least 1–2 inches past parallel (hip crease below superior patella) to maximize Vastus Medialis (VMO) and glute recruitment.
-• **Torso Stability**: If you experience forward fold, anchor your gaze 6 feet ahead on the floor and wedge your lats down into your back pockets to brace 360° intra-abdominal pressure.
-• **Foot Mechanics**: Root through the tripod of the foot (calcaneus, 1st metatarsal, 5th metatarsal). Avoid valgus knee collapse by screwing feet into the floor.`;
-    } else if (p.includes('cramp') || p.includes('pain') || p.includes('back')) {
-      reply = `**Clinical Biomechanical Recovery Protocol**:
-• **Root Cause**: Acute muscle spasms are typically caused by rapid intracellular potassium/sodium depletion paired with eccentric shock.
-• **Immediate Action**: Perform a 45-second passive elongation stretch. Do not bounce.
-• **Electrolyte Refuel**: Sip 400ml room-temperature water with 300mg sodium and 150mg elemental magnesium glycinate.`;
-    } else if (p.includes('bench') || p.includes('chest') || p.includes('shoulder')) {
-      reply = `**Pectoral Isolation & Shoulder Protection**:
-• **Elbow Angle**: Keep humerus tucked to ~45–55° relative to the ribcage. Flaring past 75° creates subacromial impingement with the acromion process.
-• **Upper Chest Cue**: For clavicular head development, utilize a 30° incline bench and drive dumbbells in a convergent triangle, stopping just short of touching.`;
-    } else {
-      reply = `**GymOS Pro Master Coach Protocol**:
-• **Neuromuscular Load**: Based on your biometrics, maintain training intensity between RPE 7.5 and 8.5 with 2 reps in reserve (RIR).
-• **Inter-Set Rest**: Rest 180s on heavy compound lifts to allow 95%+ phosphocreatine resynthesis.
-• **Nutritional Timing**: Consume 35g fast-digesting protein and 45g low-glycemic carbohydrates within 60 minutes post-session.`;
-    }
-
-    return res.json({ reply, source: 'gymos-biomechanics-engine' });
   } catch (error: any) {
     console.error('Error in /api/ai/coach:', error);
-    res.status(500).json({ error: error?.message || 'AI coach calculation error' });
+    const safeFallback = generateInstantBiomechanicsReply(req.body?.prompt || 'workout', req.body?.telemetry);
+    return res.json({ reply: safeFallback.reply, source: 'gymos-biomechanics-engine' });
   }
 });
 
@@ -146,20 +150,25 @@ app.post('/api/ai/scan-meal', async (req, res) => {
   }
 });
 
-// Mount Vite middleware in development
+// Mount Vite middleware in development or serve dist in production
 async function startServer() {
-  const isProd = process.env.NODE_ENV === 'production';
-  if (!isProd) {
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const distExists = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProd = process.env.NODE_ENV === 'production' || distExists;
+
+  if (isProd && distExists) {
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+    console.log(`GymOS Pro serving production build from ${distPath}`);
+  } else {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static('dist'));
-    app.get('*', (_req, res) => {
-      res.sendFile('dist/index.html', { root: '.' });
-    });
+    console.log('GymOS Pro serving with Vite middleware in development mode');
   }
 
   app.listen(port, '0.0.0.0', () => {

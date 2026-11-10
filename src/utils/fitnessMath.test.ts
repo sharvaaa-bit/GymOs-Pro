@@ -69,3 +69,31 @@ test('diagnoseWorkoutPain flags form breakdown on sharp joint pain vs normal DOM
   assert.equal(domsIssue.isProperFormLikely, true);
   assert.equal(domsIssue.severity, 'benign_doms');
 });
+
+import { generateInstantBiomechanicsReply } from './aiBiomechanicsEngine.ts';
+
+test('generateInstantBiomechanicsReply provides instant contextual responses across all domains', () => {
+  const squat = generateInstantBiomechanicsReply('How to fix knee valgus in squat');
+  assert.equal(squat.category, 'Lower Body Biomechanics');
+  assert.ok(squat.reply.includes('Vastus Medialis'));
+
+  const deadlift = generateInstantBiomechanicsReply('lower back pain during heavy deadlift');
+  assert.equal(deadlift.category, 'Posterior Chain Biomechanics');
+  assert.ok(deadlift.reply.includes('Hip Hinge'));
+
+  const chest = generateInstantBiomechanicsReply('Incline dumbbell press for upper chest angle');
+  assert.equal(chest.category, 'Upper Body Pressing Biomechanics');
+  assert.ok(chest.reply.includes('30°'));
+
+  const nutrition = generateInstantBiomechanicsReply('how much protein and creatine daily');
+  assert.equal(nutrition.category, 'Sports Nutrition Science');
+  assert.ok(nutrition.reply.includes('Creatine Monohydrate'));
+
+  const sport = generateInstantBiomechanicsReply('crossfit and hyrox sled push pacing');
+  assert.equal(sport.category, 'Multi-Sport Athletic Conditioning');
+  assert.ok(sport.reply.includes('Hyrox'));
+
+  const homemaker = generateInstantBiomechanicsReply('simple home workouts for household women standing all day');
+  assert.equal(homemaker.category, 'Home & Ergonomic Health');
+  assert.ok(homemaker.reply.includes('Kitchen Counter'));
+});
